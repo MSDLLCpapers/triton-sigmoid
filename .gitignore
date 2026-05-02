@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Outputs
+outputs*
+logs*
+slurm*
+test_output/
+
+# Benchmark CSVs (only keep PNG plots)
+benchmarks/results/**/*.csv
+benchmarks/results/**/*.pdf
+
+# Documentation
+docs/_build/
+docs/_static/
+docs/_templates/

@@ -1,0 +1,45 @@
+Third-Party Software Licenses
+
+This project includes or depends upon the following third-party software components. Each component is subject to its respective license terms.
+
+================================================================================
+BSD 3-Clause License
+================================================================================
+
+The following components are licensed under the BSD 3-Clause License:
+- pytorch (https://github.com/pytorch/pytorch)
+- numpy (https://github.com/numpy/numpy)
+- pandas (https://github.com/pandas-dev/pandas)
+
+License Text:
+https://opensource.org/licenses/BSD-3-Clause
+
+================================================================================
+MIT License
+================================================================================
+
+The following components are licensed under the MIT License:
+- triton (https://github.com/triton-lang/triton) - bundled with PyTorch
+- pytest (https://github.com/pytest-dev/pytest)
+- black (https://github.com/psf/black)
+- isort (https://github.com/PyCQA/isort)
+- ruff (https://github.com/astral-sh/ruff)
+- pre-commit (https://github.com/pre-commit/pre-commit)
+
+License Text:
+https://opensource.org/licenses/MIT
+
+================================================================================
+Python Software Foundation License (PSF-based)
+================================================================================
+
+The following components are licensed under a PSF-based license:
+- matplotlib (https://github.com/matplotlib/matplotlib)
+
+License Text:
+https://matplotlib.org/stable/project/license.html
+
+================================================================================
+
+For the complete license text of each component, please refer to the respective
+project's repository or official documentation linked above.

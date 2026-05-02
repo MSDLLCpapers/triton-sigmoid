@@ -1,0 +1,8 @@
+# Binary files
+*.png binary
+*.pdf binary
+*.jpg binary
+*.jpeg binary
+
+# Large benchmark result files
+benchmarks/results/**/*.csv text eol=lf
