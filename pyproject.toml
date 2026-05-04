@@ -4,18 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "triton-sigmoid"
-version = "1.0.0"
+version = "0.1.0"
 description = "High-performance sigmoid attention kernels using Triton"
 authors = [
     {name = "Vijay Sadashivaiah (MSD)"},
     {name = "Soumya Ghosh (MSD)"},
 ]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
@@ -25,20 +24,13 @@ readme = "README.md"
 requires-python = ">=3.11,<3.13"
 
 dependencies = [
+    "torch>=2.6.0",
+    "triton>=3.2.0",
     "numpy",
     "pandas",
 ]
 
 [project.optional-dependencies]
-cu126 = [
-    "torch>=2.6.0",
-]
-cu128 = [
-    "torch>=2.6.0",
-]
-cu130 = [
-    "torch>=2.6.0",
-]
 dev = [
     "black>=24.3",
     "isort>=5.0",
@@ -46,37 +38,6 @@ dev = [
     "pre-commit>=4.0.1",
     "pytest>=9.0.2",
 ]
-
-[tool.uv]
-conflicts = [
-  [
-    { extra = "cu126" },
-    { extra = "cu128" },
-    { extra = "cu130" },
-  ],
-]
-
-[tool.uv.sources]
-torch = [
-  { index = "pytorch-cu126", extra = "cu126" },
-  { index = "pytorch-cu128", extra = "cu128" },
-  { index = "pytorch-cu130", extra = "cu130" },
-]
-
-[[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu128"
-url = "https://download.pytorch.org/whl/cu128"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cu130"
-url = "https://download.pytorch.org/whl/cu130"
-explicit = true
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -111,3 +72,13 @@ relative-imports-order = "closest-to-furthest"
 extra-standard-library = ["typing"]
 section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
 known-first-party = ["triton_sigmoid"]
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu128" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

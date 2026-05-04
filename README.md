@@ -18,23 +18,17 @@ Features torch.compile support and causal masking. Requires Ampere architecture 
 ## Installation
 
 ```bash
-git clone https://github.com/MSDLLCpapers/triton-sigmoid.git
-cd triton-sigmoid
-
-# Install with uv (recommended)
-uv sync --extra cu128 --extra dev
-source .venv/bin/activate
+pip install triton-sigmoid
 ```
 
 <details>
-<summary>Other CUDA versions</summary>
+<summary>Development install from source</summary>
 
 ```bash
-# For CUDA 12.6 (compatible with CUDA 12.1+)
-uv sync --extra cu126 --extra dev
-
-# For CUDA 13.0+ (latest)
-uv sync --extra cu130 --extra dev
+git clone https://github.com/MSDLLCpapers/triton-sigmoid.git
+cd triton-sigmoid
+uv sync --extra dev
+source .venv/bin/activate
 ```
 </details>
 

@@ -48,7 +48,7 @@ Requirements
 Supported dtypes: torch.float16, torch.bfloat16, torch.float32
 """
 
-__version__ = "1.0.0"
+__version__ = "0.1.0"
 __author__ = "Vijay Sadashivaiah"
 
 # Import reference implementation
