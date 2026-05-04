@@ -49,9 +49,10 @@ DEVICE = torch.device(f'cuda:{device_id}')
 @pytest.mark.parametrize("H", [2, 8])
 @pytest.mark.parametrize("N_CTX_Q,N_CTX_K", [(128, 128), (256, 512), (512, 256), (1024, 1024), (4096, 4096)])
 @pytest.mark.parametrize("HEAD_DIM", [64, 128])
+@pytest.mark.parametrize("is_causal", [False, True])
 @pytest.mark.parametrize("mode", ["fwd", "bwd"])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16, torch.float32])
-def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
+def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, is_causal, mode, dtype):
     """Test padded sigmoid attention correctness against reference implementation.
 
     Tests random padding patterns (80-100% utilization) for both self-attention
@@ -60,14 +61,15 @@ def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
     if not torch.cuda.is_available():
         pytest.skip("CUDA not available")
 
+    if is_causal and N_CTX_Q > N_CTX_K:
+        pytest.skip("Causal requires N_CTX_Q <= N_CTX_K")
+
     tol = get_tolerance(dtype)
 
-    # Create Q, K, V tensors (BTHD format)
     q = torch.empty((B, N_CTX_Q, H, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
     k = torch.empty((B, N_CTX_K, H, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
     v = torch.empty((B, N_CTX_K, H, HEAD_DIM), dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5).requires_grad_()
 
-    # Create copies for reference comparison
     ref_q = q.detach().clone().requires_grad_(True)
     ref_k = k.detach().clone().requires_grad_(True)
     ref_v = v.detach().clone().requires_grad_(True)
@@ -76,11 +78,9 @@ def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
     pt_k = k.detach().clone().requires_grad_(True)
     pt_v = v.detach().clone().requires_grad_(True)
 
-    # Generate random sequence lengths (80-100% of max length)
     seq_lens_q = torch.randint(int(0.8 * N_CTX_Q), N_CTX_Q + 1, (B,), device=DEVICE, dtype=torch.int32)
     seq_lens_k = torch.randint(int(0.8 * N_CTX_K), N_CTX_K + 1, (B,), device=DEVICE, dtype=torch.int32)
 
-    # Validity masks for error computation
     query_positions = torch.arange(N_CTX_Q, device=DEVICE).unsqueeze(0)
     key_positions = torch.arange(N_CTX_K, device=DEVICE).unsqueeze(0)
     query_valid_mask = query_positions < seq_lens_q.unsqueeze(1)
@@ -88,7 +88,6 @@ def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
     query_valid_mask_expanded = query_valid_mask.view(B, N_CTX_Q, 1, 1).to(dtype)
     key_valid_mask_expanded = key_valid_mask.view(B, N_CTX_K, 1, 1).to(dtype)
 
-    # Forward pass
     ref_out = sigmoid_attention_ref(
         ref_q,
         ref_k,
@@ -97,9 +96,9 @@ def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
         seq_lens_q=seq_lens_q,
         upcast=True,
         reorder_ops=False,
+        causal=is_causal,
     )
 
-    # PyTorch baseline: standard precision
     pt_out = sigmoid_attention_ref(
         pt_q,
         pt_k,
@@ -108,15 +107,16 @@ def test_op(B, H, N_CTX_Q, N_CTX_K, HEAD_DIM, mode, dtype):
         seq_lens_q=seq_lens_q,
         upcast=False,
         reorder_ops=True,
+        causal=is_causal,
     )
 
-    # Triton implementation
     tri_out = sigmoid_attention_padded(
         q,
         k,
         v,
         seq_lens_q=seq_lens_q,
         seq_lens_k=seq_lens_k,
+        is_causal=is_causal,
     )
 
     # Compute errors on valid positions only
@@ -358,39 +358,29 @@ def test_causal_with_padding_correctness(batch_size, n_heads, seqlen, head_dim, 
         causal=True,
     )
 
-    # Compare valid positions only
     tol = get_tolerance(dtype)
     for b in range(batch_size):
-        # Determine valid length for this sequence
         valid_len = seq_lens_k[b].item()
-        tri_slice = tri_out[b, :, :valid_len, :]
-        ref_slice = ref_out[b, :, :valid_len, :]
+        tri_slice = tri_out[b, :valid_len, :, :]
+        ref_slice = ref_out[b, :valid_len, :, :]
 
         error = (tri_slice - ref_slice).abs().max().item()
         assert error < tol, f"Batch {b}: Error {error:.6e} exceeds tolerance {tol:.6e}"
 
-    # Test backward pass
     dout = torch.randn_like(tri_out)
     tri_out.backward(dout)
     ref_out.backward(dout)
 
-    # Compare gradients at valid positions
     for b in range(batch_size):
         valid_len = seq_lens_k[b].item()
 
-        dq_tri = q.grad[b, :, :valid_len, :]
-        dq_ref = ref_q.grad[b, :, :valid_len, :]
-        dq_error = (dq_tri - dq_ref).abs().max().item()
+        dq_error = (q.grad[b, :valid_len, :, :] - ref_q.grad[b, :valid_len, :, :]).abs().max().item()
         assert dq_error < tol, f"Batch {b} dQ: Error {dq_error:.6e} exceeds tolerance {tol:.6e}"
 
-        dk_tri = k.grad[b, :, :valid_len, :]
-        dk_ref = ref_k.grad[b, :, :valid_len, :]
-        dk_error = (dk_tri - dk_ref).abs().max().item()
+        dk_error = (k.grad[b, :valid_len, :, :] - ref_k.grad[b, :valid_len, :, :]).abs().max().item()
         assert dk_error < tol, f"Batch {b} dK: Error {dk_error:.6e} exceeds tolerance {tol:.6e}"
 
-        dv_tri = v.grad[b, :, :valid_len, :]
-        dv_ref = ref_v.grad[b, :, :valid_len, :]
-        dv_error = (dv_tri - dv_ref).abs().max().item()
+        dv_error = (v.grad[b, :valid_len, :, :] - ref_v.grad[b, :valid_len, :, :]).abs().max().item()
         assert dv_error < tol, f"Batch {b} dV: Error {dv_error:.6e} exceeds tolerance {tol:.6e}"
 
 
@@ -806,3 +796,105 @@ def test_cross_attention_extreme_length_ratio():
 
     out.sum().backward()
     assert not torch.isnan(q.grad).any()
+
+
+@pytest.mark.parametrize("is_causal", [False, True])
+def test_padded_score_mod_with_causal(is_causal):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, T, HEAD_DIM = 2, 4, 128, 64
+    dtype = torch.float16
+    tol = get_tolerance(dtype)
+
+    q = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    score_mod = torch.empty(B, T, dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5)
+    seq_lens_k = torch.tensor([100, 110], dtype=torch.int32, device=DEVICE)
+
+    ref_q = q.detach().clone().requires_grad_(True)
+    ref_k = k.detach().clone().requires_grad_(True)
+    ref_v = v.detach().clone().requires_grad_(True)
+
+    tri_out = sigmoid_attention_padded(
+        q, k, v, seq_lens_k=seq_lens_k, score_mod=score_mod, is_causal=is_causal,
+    )
+    ref_out = sigmoid_attention_ref(
+        ref_q, ref_k, ref_v, seq_lens_k=seq_lens_k, score_mod=score_mod, causal=is_causal, upcast=True,
+    )
+
+    for b in range(B):
+        valid_len = seq_lens_k[b].item()
+        error = (tri_out[b, :valid_len] - ref_out[b, :valid_len]).abs().max().item()
+        assert error < tol, f"Batch {b}: Forward error {error:.6e} exceeds tolerance {tol:.6e}"
+
+    dout = torch.randn_like(tri_out)
+    tri_out.backward(dout)
+    ref_out.backward(dout)
+
+    for b in range(B):
+        valid_len = seq_lens_k[b].item()
+        dq_error = (q.grad[b, :valid_len] - ref_q.grad[b, :valid_len]).abs().max().item()
+        dk_error = (k.grad[b, :valid_len] - ref_k.grad[b, :valid_len]).abs().max().item()
+        dv_error = (v.grad[b, :valid_len] - ref_v.grad[b, :valid_len]).abs().max().item()
+        assert dq_error < tol, f"Batch {b} dQ error {dq_error:.6e} exceeds tolerance {tol:.6e}"
+        assert dk_error < tol, f"Batch {b} dK error {dk_error:.6e} exceeds tolerance {tol:.6e}"
+        assert dv_error < tol * 2, f"Batch {b} dV error {dv_error:.6e} exceeds tolerance {tol*2:.6e}"
+
+
+@pytest.mark.parametrize("T", [1, 7, 15, 33])
+def test_padded_small_sequence_lengths(T):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, HEAD_DIM = 2, 4, 64
+    dtype = torch.float16
+    tol = get_tolerance(dtype)
+
+    q = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    seq_lens_k = torch.tensor([max(1, T - 1), T], dtype=torch.int32, device=DEVICE)
+
+    ref_q = q.detach().clone().requires_grad_(True)
+    ref_k = k.detach().clone().requires_grad_(True)
+    ref_v = v.detach().clone().requires_grad_(True)
+
+    tri_out = sigmoid_attention_padded(q, k, v, seq_lens_k=seq_lens_k)
+    ref_out = sigmoid_attention_ref(ref_q, ref_k, ref_v, seq_lens_k=seq_lens_k, upcast=True)
+
+    for b in range(B):
+        valid_len = seq_lens_k[b].item()
+        error = (tri_out[b, :valid_len] - ref_out[b, :valid_len]).abs().max().item()
+        assert error < tol, f"T={T}, Batch {b}: Forward error {error:.6e} exceeds tolerance {tol:.6e}"
+
+    dout = torch.randn_like(tri_out)
+    tri_out.backward(dout)
+    ref_out.backward(dout)
+
+    for b in range(B):
+        valid_len = seq_lens_k[b].item()
+        dq_error = (q.grad[b, :valid_len] - ref_q.grad[b, :valid_len]).abs().max().item()
+        assert dq_error < tol, f"T={T}, Batch {b}: dQ error {dq_error:.6e} exceeds tolerance {tol:.6e}"
+
+
+def test_padded_determinism():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, T, HEAD_DIM = 2, 4, 256, 64
+    dtype = torch.float16
+
+    q = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+    k = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+    v = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+    seq_lens_k = torch.tensor([200, 250], dtype=torch.int32, device=DEVICE)
+
+    out1 = sigmoid_attention_padded(q, k, v, seq_lens_k=seq_lens_k, is_causal=True)
+    out2 = sigmoid_attention_padded(q, k, v, seq_lens_k=seq_lens_k, is_causal=True)
+
+    assert torch.equal(out1, out2), "Identical inputs should produce identical outputs"

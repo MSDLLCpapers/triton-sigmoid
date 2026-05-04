@@ -48,13 +48,24 @@ Requirements
 Supported dtypes: torch.float16, torch.bfloat16, torch.float32
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 __author__ = "Vijay Sadashivaiah"
 
-# Import reference implementation
-from .sigmoid_reference import sigmoid_attention_ref
+import torch
 
-# Import main implementations
+if not torch.cuda.is_available():
+    raise RuntimeError(
+        "triton-sigmoid requires a CUDA GPU but none was detected. "
+        "Install PyTorch with CUDA support: https://pytorch.org/get-started/locally/"
+    )
+
+if torch.cuda.get_device_capability()[0] < 8:
+    raise RuntimeError(
+        f"triton-sigmoid requires Ampere (compute capability 8.0) or newer, "
+        f"but found {'.'.join(map(str, torch.cuda.get_device_capability()))}."
+    )
+
+from .sigmoid_reference import sigmoid_attention_ref
 from .sigmoid_triton_dense import sigmoid_attention
 from .sigmoid_triton_padded import sigmoid_attention_padded
 

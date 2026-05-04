@@ -757,3 +757,94 @@ def test_sigmoid_large_negative_values():
     out = sigmoid_attention(q, k, v)
     assert torch.isfinite(out).all(), "Should handle large negative scores"
     assert not torch.isnan(out).any(), "Should not produce NaN with large negative scores"
+
+
+@pytest.mark.parametrize("T", [1, 7, 15, 33])
+def test_small_sequence_lengths(T):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, HEAD_DIM = 2, 4, 64
+    dtype = torch.float16
+    tol = get_tolerance(dtype)
+
+    q = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+
+    ref_q = q.detach().clone().requires_grad_(True)
+    ref_k = k.detach().clone().requires_grad_(True)
+    ref_v = v.detach().clone().requires_grad_(True)
+
+    tri_out = sigmoid_attention(q, k, v)
+    ref_out = sigmoid_attention_ref(ref_q, ref_k, ref_v, upcast=True)
+
+    error = (tri_out - ref_out).abs().max().item()
+    assert error < tol, f"T={T}: Forward error {error:.6e} exceeds tolerance {tol:.6e}"
+
+    dout = torch.randn_like(tri_out)
+    tri_out.backward(dout)
+    ref_out.backward(dout)
+
+    dq_error = (q.grad - ref_q.grad).abs().max().item()
+    dk_error = (k.grad - ref_k.grad).abs().max().item()
+    dv_error = (v.grad - ref_v.grad).abs().max().item()
+    assert dq_error < tol, f"T={T}: dQ error {dq_error:.6e} exceeds tolerance {tol:.6e}"
+    assert dk_error < tol, f"T={T}: dK error {dk_error:.6e} exceeds tolerance {tol:.6e}"
+    assert dv_error < tol, f"T={T}: dV error {dv_error:.6e} exceeds tolerance {tol:.6e}"
+
+
+@pytest.mark.parametrize("is_causal", [False, True])
+def test_score_mod_with_causal(is_causal):
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, T, HEAD_DIM = 2, 4, 128, 64
+    dtype = torch.float16
+    tol = get_tolerance(dtype)
+
+    q = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    k = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    v = torch.empty(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype).normal_(mean=0.0, std=0.5).requires_grad_()
+    score_mod = torch.empty(B, T, dtype=dtype, device=DEVICE).normal_(mean=0.0, std=0.5)
+
+    ref_q = q.detach().clone().requires_grad_(True)
+    ref_k = k.detach().clone().requires_grad_(True)
+    ref_v = v.detach().clone().requires_grad_(True)
+
+    tri_out = sigmoid_attention(q, k, v, score_mod=score_mod, is_causal=is_causal)
+    ref_out = sigmoid_attention_ref(ref_q, ref_k, ref_v, score_mod=score_mod, causal=is_causal, upcast=True)
+
+    error = (tri_out - ref_out).abs().max().item()
+    assert error < tol, f"Forward error {error:.6e} exceeds tolerance {tol:.6e}"
+
+    dout = torch.randn_like(tri_out)
+    tri_out.backward(dout)
+    ref_out.backward(dout)
+
+    dq_error = (q.grad - ref_q.grad).abs().max().item()
+    dk_error = (k.grad - ref_k.grad).abs().max().item()
+    dv_error = (v.grad - ref_v.grad).abs().max().item()
+    assert dq_error < tol, f"dQ error {dq_error:.6e} exceeds tolerance {tol:.6e}"
+    assert dk_error < tol, f"dK error {dk_error:.6e} exceeds tolerance {tol:.6e}"
+    assert dv_error < tol, f"dV error {dv_error:.6e} exceeds tolerance {tol:.6e}"
+
+
+def test_determinism():
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    torch.manual_seed(42)
+    B, H, T, HEAD_DIM = 2, 4, 256, 64
+    dtype = torch.float16
+
+    q = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+    k = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+    v = torch.randn(B, T, H, HEAD_DIM, device=DEVICE, dtype=dtype)
+
+    out1 = sigmoid_attention(q, k, v, is_causal=True)
+    out2 = sigmoid_attention(q, k, v, is_causal=True)
+
+    assert torch.equal(out1, out2), "Identical inputs should produce identical outputs"
